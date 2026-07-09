@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Enums\UserStatus;
+use App\Models\SystemSetting;
 use App\Models\User;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
@@ -33,6 +34,10 @@ class DatabaseSeeder extends Seeder
 
         if (! $admin->hasRole('admin')) {
             $admin->assignRole('admin');
+        }
+
+        if (SystemSetting::get('discount_approval_threshold') === null) {
+            SystemSetting::set('discount_approval_threshold', 10);
         }
     }
 }

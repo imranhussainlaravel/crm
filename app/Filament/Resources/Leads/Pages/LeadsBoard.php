@@ -2,10 +2,12 @@
 
 namespace App\Filament\Resources\Leads\Pages;
 
+use App\Enums\DealStage;
 use App\Enums\LeadActivityType;
 use App\Enums\LeadStatus;
 use App\Enums\LostReason;
 use App\Filament\Resources\Leads\LeadResource;
+use App\Models\Deal;
 use App\Models\Lead;
 use App\Models\User;
 use Filament\Actions\Action;
@@ -133,6 +135,13 @@ class LeadsBoard extends BoardResourcePage
                 'type' => LeadActivityType::StatusChange,
                 'note' => "Status changed from {$previousStatus->getLabel()} to {$targetStatus->getLabel()}",
             ]);
+        }
+
+        if ($targetStatus === LeadStatus::Quoted) {
+            Deal::firstOrCreate(
+                ['lead_id' => $lead->id],
+                ['sales_rep_id' => $lead->assigned_agent_id, 'stage' => DealStage::Quoted]
+            );
         }
     }
 }
