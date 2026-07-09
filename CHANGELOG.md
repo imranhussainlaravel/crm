@@ -42,6 +42,18 @@ Verification for this phase used real logged-in browser sessions (Playwright + E
 - Pipeline stage *naming* is not yet configurable (spec §3.11) — stages are currently fixed PHP enums (`LeadStatus`, `DealStage`, `OrderStatus`). Making labels admin-editable would mean moving them into the database, which is a bigger structural change than this phase's scope; flagged here so it isn't forgotten, not silently dropped.
 - A company-wide `activity_log` covering *every* admin action (spec §3.11) doesn't exist yet — only Lead-specific actions (status changes, reassignment) are logged, to `lead_activities`. General accountability logging is Phase 7 (Polish) territory.
 
+## Phase 4 — Production & Dispatch
+
+- **Order queue**: `OrderResource` (nav group "Production") is where the Order rows created in Phase 3 actually get worked. Admin sees every order; the owning Agent sees their own orders (via `deal.sales_rep_id`) as a status readout; **Production sees every order with no sales-pipeline access at all** (spec §2C) — Production's nav has no Leads/Deals/Companies/Contacts/Products, only Orders, and the order table/infolist never surfaces price/quotation figures to keep with "Production cannot see pricing unless Admin allows it."
+- **One-click status pipeline** (Pending → In Production → Ready to Dispatch → Dispatched → Delivered): each stage is a single button visible only to Production/Admin. Moving to "Dispatched" requires the **dispatch form** first (vehicle/driver info, dispatch date, delivery address, invoice/tracking number → `Dispatch` model, one-to-one with the order).
+- **In-app notifications with a topbar bell icon** (spec §3.9, first concrete instance): every status transition sends a Filament database notification to both the person making the change (a toast) and the order's sales rep (persisted to the bell). Enabled via `->databaseNotifications()` on the panel — this is Filament's built-in mechanism, no custom UI needed.
+- **Orders overview widget**: pending/in-production/ready/dispatched counts, visible to Admin and Production on the dashboard (spec §3.10's Production-facing dashboard requirement — pulled forward from Phase 6 since it's tightly coupled to this phase's own data, not cross-cutting business analytics).
+
+Bugs hit and fixed during this phase:
+1. **`QUEUE_CONNECTION=database` with no queue worker ever running meant every Filament database notification silently vanished into the `jobs` table instead of being delivered** — `sendToDatabase()` reported success, no exception was thrown anywhere, and the bell icon just never showed anything. This is easy to miss because nothing *fails visibly* — the only tell is `unreadNotifications()->count()` staying at 0 while `DB::table('jobs')->count()` climbs. Fixed by switching local dev to `QUEUE_CONNECTION=sync` (processes jobs immediately, inline — no separate worker process to remember to start, consistent with keeping this dev environment's number of "must remember to run" background processes as low as possible). If a queue *is* wanted later (e.g. for genuinely slow jobs), remember `php artisan queue:work <connection>` needs the connection name explicitly if it's not the default — `queue:work` alone only drains whatever `QUEUE_CONNECTION` currently points to.
+
+Verification: full Production pipeline walked end-to-end via a real logged-in Production-role browser session (Pending → In Production → Ready to Dispatch → dispatch form submission → Dispatched → Delivered), confirmed the sales rep actually received each notification (checked `unreadNotifications()` directly, not just the toast), confirmed Production's nav has zero sales-pipeline items, and re-ran the full Phase 2/3 regression + all-roles smoke test — zero errors.
+
 ## Example scenario: a lead's full journey to an order
 
 This walks the exact path the system supports end-to-end, referencing what phase built each step — useful both as a smoke-test script and as onboarding for anyone new to the app.
@@ -53,8 +65,9 @@ This walks the exact path the system supports end-to-end, referencing what phase
 5. Fiona drags the card to **Qualified**, then to **Quoted**. The moment it hits "Quoted", a **Deal** is silently created behind the scenes, owned by Fiona. *(Phase 3)*
 6. Fiona goes to **Sales Pipeline → Deals**, finds the new deal card, opens it, clicks **New quotation**, adds the "5-ply Corrugated Box" line item, types quantity 600 — unit price auto-fills to 40 (the 500+ tier) the moment she tabs out. Total and discount recalculate automatically. *(Phase 3)*
 7. She clicks **Mark as Sent**. If the discount she'd negotiated exceeded the Admin-set threshold, this would instead tell her to wait for Admin approval — it doesn't here, since there's no discount at list price. *(Phase 3)*
-8. The client comes back positive. Fiona (or Admin) uses **Record client response → Approved by client**, then drags the Deal card to **Won**. This creates an **Order** (status Pending) and marks the Lead "Won" too. *(Phase 3 creates the Order row; Phase 4 will add the status pipeline / dispatch workflow on top of it.)*
-9. *(Not yet built)* Production picks up the order queue, moves it through In Production → Ready to Dispatch → Dispatched → Delivered, filling in dispatch details. This is Phase 4.
+8. The client comes back positive. Fiona (or Admin) uses **Record client response → Approved by client**, then drags the Deal card to **Won**. This creates an **Order** (status Pending) and marks the Lead "Won" too. *(Phase 3)*
+9. **Pat (Production)** logs in — sees only **Production → Orders**, nothing else. Opens the order, clicks **Start production**, then **Mark ready to dispatch**, then **Dispatch** (fills in vehicle info, dispatch date, delivery address, invoice number), then **Mark delivered**. Fiona gets a bell notification at every step. *(Phase 4)*
+10. *(Not yet built)* Real-time chat between Fiona and Pat about this specific order, and company-wide reporting on how long it took from Won to Delivered. These are Phases 5 and 6.
 
 ## Test accounts (dev database)
 
@@ -62,3 +75,4 @@ This walks the exact path the system supports end-to-end, referencing what phase
 - `lea.gen@crm.local` / `AgentPass123!` (Lead Gen only)
 - `sam.sales@crm.local` / `AgentPass123!` (Sales only)
 - `fiona.full@crm.local` / `AgentPass123!` (Full Cycle) — owns the seeded test lead (Bilal Khan / Acme Packaging Co), its Deal, and quotation v1
+- `pat.production@crm.local` / `AgentPass123!` (Production)

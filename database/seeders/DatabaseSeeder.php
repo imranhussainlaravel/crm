@@ -36,6 +36,19 @@ class DatabaseSeeder extends Seeder
             $admin->assignRole('admin');
         }
 
+        $production = User::firstOrCreate(
+            ['email' => 'pat.production@crm.local'],
+            [
+                'name' => 'Pat Production',
+                'password' => Hash::make('AgentPass123!'),
+                'status' => UserStatus::Active,
+            ]
+        );
+
+        if (! $production->hasRole('production')) {
+            $production->assignRole('production');
+        }
+
         if (SystemSetting::get('discount_approval_threshold') === null) {
             SystemSetting::set('discount_approval_threshold', 10);
         }
