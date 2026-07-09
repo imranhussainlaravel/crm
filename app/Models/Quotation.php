@@ -65,6 +65,10 @@ class Quotation extends Model
             'total_value' => $totalValue,
             'discount_percent' => $discountPercent,
         ]);
+
+        if ($this->deal->quotations()->first()?->is($this)) {
+            $this->deal->update(['value' => $totalValue]);
+        }
     }
 
     public function needsDiscountApproval(): bool

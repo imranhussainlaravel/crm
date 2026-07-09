@@ -67,4 +67,9 @@ class User extends Authenticatable implements FilamentUser
     {
         return $this->belongsTo(User::class, 'created_by_admin_id');
     }
+
+    public function deals(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(Deal::class, 'sales_rep_id');
+    }
 }

@@ -57,6 +57,11 @@ class Lead extends Model
         return $this->hasMany(LeadActivity::class)->latest();
     }
 
+    public function deal(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(Deal::class);
+    }
+
     public function isOverdue(): bool
     {
         return $this->follow_up_date !== null && $this->follow_up_date->isPast();

@@ -106,7 +106,10 @@ class OrdersTable
 
     protected static function transition(Order $record, OrderStatus $status): void
     {
-        $record->update(['status' => $status]);
+        $record->update([
+            'status' => $status,
+            ...($status === OrderStatus::Delivered ? ['delivered_at' => now()] : []),
+        ]);
 
         Notification::make()
             ->title("Order status changed to {$status->getLabel()}")

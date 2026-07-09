@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
-#[Fillable(['deal_id', 'status', 'deadline', 'special_instructions'])]
+#[Fillable(['deal_id', 'status', 'deadline', 'special_instructions', 'delivered_at'])]
 class Order extends Model
 {
     protected function casts(): array
@@ -16,6 +16,7 @@ class Order extends Model
         return [
             'status' => OrderStatus::class,
             'deadline' => 'date',
+            'delivered_at' => 'datetime',
         ];
     }
 
