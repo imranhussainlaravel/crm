@@ -34,7 +34,13 @@ class User extends Authenticatable implements FilamentUser
             'password' => 'hashed',
             'work_scope' => WorkScope::class,
             'status' => UserStatus::class,
+            'last_active_at' => 'datetime',
         ];
+    }
+
+    public function isOnline(): bool
+    {
+        return $this->last_active_at !== null && $this->last_active_at->gt(now()->subMinutes(3));
     }
 
     public function canAccessPanel(Panel $panel): bool
