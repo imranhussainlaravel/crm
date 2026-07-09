@@ -20,6 +20,8 @@ class Chat extends Page
 
     protected static ?string $navigationLabel = 'Chat';
 
+    protected static ?int $navigationSort = -1;
+
     public ?string $activeType = null;
 
     public ?string $activeId = null;

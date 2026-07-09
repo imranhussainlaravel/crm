@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\QuotationStatus;
+use App\Models\Concerns\LogsActivity;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -20,6 +21,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 ])]
 class Quotation extends Model
 {
+    use LogsActivity;
+
     protected function casts(): array
     {
         return [
@@ -76,5 +79,10 @@ class Quotation extends Model
         $threshold = (float) SystemSetting::get('discount_approval_threshold', 10);
 
         return (float) $this->discount_percent > $threshold && $this->discount_approved_by === null;
+    }
+
+    public function activityLogLabel(): string
+    {
+        return "Quotation v{$this->version} for Deal #{$this->deal_id}";
     }
 }

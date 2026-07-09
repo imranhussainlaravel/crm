@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\OrderStatus;
+use App\Models\Concerns\LogsActivity;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -11,6 +12,8 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 #[Fillable(['deal_id', 'status', 'deadline', 'special_instructions', 'delivered_at'])]
 class Order extends Model
 {
+    use LogsActivity;
+
     protected function casts(): array
     {
         return [
@@ -28,5 +31,10 @@ class Order extends Model
     public function dispatch(): HasOne
     {
         return $this->hasOne(Dispatch::class);
+    }
+
+    public function activityLogLabel(): string
+    {
+        return "Order #{$this->id} ({$this->deal?->lead?->contact?->company?->name})";
     }
 }

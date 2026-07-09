@@ -37,6 +37,12 @@ class AdminPanelProvider extends PanelProvider
                 fn (): string => Vite::withEntryPoints(['resources/js/app.js'])->toHtml(),
             )
             ->databaseNotifications()
+            ->navigationGroups([
+                'Sales Pipeline',
+                'Production',
+                'Catalog',
+                'System',
+            ])
             ->colors([
                 'primary' => Color::Teal,
             ])

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\ProductInterest;
+use App\Models\Concerns\LogsActivity;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -10,6 +11,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 #[Fillable(['name', 'type', 'material', 'size_options', 'moq', 'base_price'])]
 class Product extends Model
 {
+    use LogsActivity;
+
     protected function casts(): array
     {
         return [
