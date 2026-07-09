@@ -116,6 +116,29 @@ Verification: tinker sanity-checked every new query in isolation before it went 
 
 Verification: fresh browser sessions for all 5 roles re-ran the full nav sweep (now including `/admin/activity-logs`) with zero HTTP 500s and zero unexpected console errors (only the expected 403-console-logs from the agent-forbidden checks, now covering Activity Log too); the activity log itself was verified by triggering a create/update/delete on a throwaway `Company` as an authenticated Admin via `tinker` and confirming three correctly-worded log rows appeared, then confirming an agent gets a 403 on `/admin/activity-logs`; the throwaway test data was deleted afterward. Re-ran the same sweep 3 times in a row to specifically pressure-test the Phase 5/6-documented `pageerror: Object` teardown artifact — got 4, then 2, then 0 occurrences across identical runs with identical code, and two smaller targeted repros (a single chat page closed alone, two chat pages with an active DM open closed back-to-back) both produced zero — conclusively a nondeterministic multi-page browser-teardown race in the test harness, not the application; `storage/logs/laravel.log` gained zero new `ERROR` lines across this entire phase's work.
 
+## Phase 8 — Pre-launch hardening, gap review, and a real production path
+
+A full pre-push review requested explicitly before this app goes anywhere near a real server: re-tested everything end-to-end, audited for anything that would make the repo risky to push publicly or deploy carelessly, closed a real security gap, and built the missing piece needed to create a genuine production admin account without ever touching demo data.
+
+- **Fixed a real credential-exposure gap**: `DatabaseSeeder` hardcoded the dev admin's password (`AdminCrm2026!`) and Pat Production's password (`AgentPass123!`) directly in a tracked PHP file — readable by anyone with repo access, forever, in git history. Fixed by splitting it:
+  - `DatabaseSeeder` now only creates the three roles (`admin`/`agent`/`production`) and the default discount-approval system setting — zero credentials, safe to run in any environment including production, and it's what `php artisan db:seed` runs by default.
+  - A new `DemoDataSeeder` holds the old admin/production demo-account creation, clearly commented as dev-only, and only runs if explicitly named: `php artisan db:seed --class=DemoDataSeeder`. It is never invoked automatically.
+- **New `php artisan app:create-admin` command** (`app/Console/Commands/CreateAdminCommand.php`) — the actual answer to "how do I get a real admin onto the production server without migrating dev data": it prompts for (or accepts via `--email`/`--name`) the admin's details, generates a cryptographically-random 24-character password via Laravel's `Str::password()` if `--password` isn't given, validates it meets a minimum strength bar (12+ characters, letters, numbers, symbols) via the same `Illuminate\Validation\Rules\Password` rule Laravel itself recommends, then inserts the user directly into the `users` table (hashed, `updateOrCreate` so re-running it to promote an existing account also works) and assigns the `admin` role. The generated password is printed to the terminal **exactly once**, with an explicit "save it now, this won't be shown again" warning — it is never written to a log file, a seeder, or any other file. See "Creating the production admin account" below for the exact commands to run.
+- **Closed a real usability/security gap**: there was no way for any user to recover a forgotten password or change their own password — only Admin editing an agent's record could reset it. Added `->passwordReset()` and `->profile(isSimple: false)` to `AdminPanelProvider`, both first-party Filament panel features:
+  - `/admin/password-reset/request` → `/admin/password-reset/reset`: standard "forgot password" email flow using Laravel's built-in password-broker and signed URLs. Reads whatever `MAIL_MAILER` the environment has configured (dev uses `log`, so reset links land in `storage/logs/laravel.log`; production needs a real mailer — see the checklist below).
+  - `/admin/profile`: any logged-in user can edit their own name, email, and password. Changing the password requires typing it twice (new + confirm) *and* the current password — Filament reveals those two extra required fields reactively the moment you start typing a new one, which is correct, deliberate security behavior (verified, not a bug — see the bugs-investigated list below).
+- **Dashboard**: removed `FilamentInfoWidget` (the "filament v5.6.8 / Documentation / GitHub" panel — pure framework branding, meaningless to a packaging-business user) and replaced it with a new `TeamOverviewWidget` (Admin-only): active agent count, company count, open leads, open deals. Same slot, actually useful information instead.
+- **Considered and deliberately not added**: CSV/XLSX export. Filament ships this out of the box via `filament/actions`' `ExportAction`/`Exporter` classes (already a dependency, so adding it later is cheap — one `Exporter` subclass and one `ExportAction::make()` per resource), but it wasn't in the original spec and no one asked for it yet, so it isn't included speculatively. Noted here so it's a quick add later, not a rediscovery.
+- Pipeline stage naming configurability (flagged in Phase 3, reconfirmed still-deferred in Phase 7) remains deliberately out of scope — still a structural change (enum-backed stages would need to move into the database) bigger than a hardening pass.
+
+### Bugs investigated this phase — all ruled out, recorded so they aren't re-investigated from scratch
+1. **Not a bug**: Playwright's `.selectOption()` on the Create Agent form's Role `<select>` didn't trigger the Livewire-reactive hide/show of the "Work scope" field, while genuine keyboard interaction (focus + arrow key) did, confirmed by a side-by-side comparison script. The real app works correctly for real users — `.selectOption()` doesn't fully replicate the event sequence this specific reactive field depends on. If a future Playwright test needs to change a reactive Filament `<select>`, drive it with keyboard/mouse interaction, not `.selectOption()`.
+2. **Not a bug**: the Profile page's password change appeared to silently fail in several test runs. Root cause was the test script only filling the "New password" field — Filament's profile page correctly requires "Confirm new password" and "Current password" too, both of which only render once you start typing a new password. Confirmed genuinely correct, deliberate security behavior once the test filled all three fields: verified end-to-end by reading the bcrypt hash from the database before and after, confirming it actually changed, then confirming login fails with the old password and succeeds with the new one.
+3. **Not a code regression**: real-time chat delivery failed on `ws://localhost:8080` throughout this phase's testing, including immediately after a clean `reverb:start` restart. Traced to this Windows machine's Wi-Fi network profile reporting as "Public" (likely reset by this session's earlier laptop restarts), which makes Windows Firewall silently drop inbound connections to `php.exe` — both the WebSocket path (browser console: `Connection closed before receiving a handshake response`) and Reverb's own HTTP trigger endpoint that the server side uses to publish a broadcast (`storage/logs/laravel.log`: `Pusher error: cURL error 52: Empty reply from server`, logged whenever a chat message was sent during this phase's testing) — both are the same root cause from two different directions, not two bugs. With no interactive "allow access" prompt possible in this non-interactive session, every connection attempt just resets. Confirmed the application itself is unaffected: the `wire:poll.10s` fallback (built in Phase 5 for exactly this kind of situation) delivered a test message correctly in ~7 seconds with the WebSocket path completely blocked. A side effect worth recording: with Echo perpetually retrying the blocked WebSocket connection in the background, pages never go fully network-idle, which made the final regression sweep's `waitUntil: 'networkidle'` checks time out on a few page loads and produced a few more of the already-documented Phase 5/6 `pageerror: Object` teardown artifacts than usual — the pages themselves still rendered correctly (confirmed via their titles), only the test harness's idle-detection was affected. Not fixed on this dev machine — changing the network profile/firewall is a security-relevant system setting outside this session's authority to change unilaterally; see the final summary for the exact command the user can run. **Irrelevant to production**: the real server (Deployment section above) has Reverb behind Nginx with its own deliberately-configured firewall, not Windows' automatic public-network defaults.
+4. Roughly three dozen stray headless-browser/Node processes accumulated over this long session from earlier interrupted test scripts, causing intermittent Playwright timeouts unrelated to the app. Identified the specific orphaned instance (launched with `--no-startup-window`, its launching process already exited) but deliberately did not force-kill browser/node processes by name — that risks the user's own real browser session — flagged instead of silently cleaned up.
+
+Verification: full 5-role smoke test re-run after every change in this phase (nav sweep including the new Activity Log page, zero HTTP 500s, only the expected 403s from access-control checks); `php artisan app:create-admin` tested end-to-end against the real dev database (created a throwaway admin, confirmed the `admin` role and hashed password via `tinker`, deleted it); password-reset and profile-edit features tested end-to-end against ground truth (database password hash, `laravel.log` mail content) rather than trusting UI screenshots alone, per this project's standing verification standard; confirmed `.env` has never been committed (`git log --all -- .env` returns nothing) and no real credentials appear anywhere in tracked files (`git grep` across the seeders and config).
+
 ## Deployment (documentation only — no production server exists for this project yet)
 
 This section is a from-scratch VPS setup guide, written for whoever deploys this app for real. Assumes a fresh Ubuntu 24.04 LTS server; adjust package names for another distro.
@@ -123,7 +146,7 @@ This section is a from-scratch VPS setup guide, written for whoever deploys this
 1. **System packages**: `php8.3-fpm` (or newer) with the extensions Laravel 13 needs — `php8.3-{cli,fpm,mysql,mbstring,xml,curl,zip,bcmath,gd,intl}` — plus `mysql-server`, `nginx`, `nodejs`/`npm` (for the one-time `npm run build`), `composer`, `git`, `supervisor`.
 2. **Clone and install**: `git clone`, then `composer install --no-dev --optimize-autoloader`, `npm ci && npm run build` (production JS/CSS — `npm run dev` is a local-only file watcher, never run it here).
 3. **`.env`**: copy `.env.example`, then set — `APP_ENV=production`, `APP_DEBUG=false` (never `true` in production — it leaks stack traces and `.env` values to any visitor who triggers an error), `APP_URL` to the real domain, a fresh `APP_KEY` (`php artisan key:generate`), real `DB_*` credentials, `BROADCAST_CONNECTION=reverb` with freshly generated `REVERB_APP_ID`/`REVERB_APP_KEY`/`REVERB_APP_SECRET` (never reuse this repo's dev values — they're committed nowhere, but they're also not secret-quality, having been typed into a dev `.env` and screenshots during this build), `QUEUE_CONNECTION=sync` (still correct in production for this app's workload — see the Phase 4 note on why a separate queue worker isn't needed here unless a genuinely slow job is added later).
-4. **Database**: `php artisan migrate --force` (the `--force` flag is required for `APP_ENV=production` to skip the "are you sure" prompt non-interactively), then seed the initial Admin user only — `php artisan db:seed --class=AdminUserSeeder` if one exists, or create the first Admin via `tinker` — do **not** run the full demo seeder that creates the test agents/leads used throughout this dev environment.
+4. **Database and the first admin account — see the dedicated "Creating the production admin account" section below** (added in Phase 8). Short version: `php artisan migrate --force`, then `php artisan db:seed --force` (roles only, zero credentials — safe every time), then `php artisan app:create-admin` to create the real admin with a freshly generated password. **Never** run `php artisan db:seed --class=DemoDataSeeder` on production — it creates accounts with fixed passwords that are readable by anyone with repo access.
 5. **Reverb in production — the part most likely to be gotten wrong**: Reverb must run as a **long-lived background service**, not `php artisan reverb:start` in a terminal that closes when you disconnect. Use `supervisor` (an example config, `/etc/supervisor/conf.d/reverb.conf`):
    ```ini
    [program:reverb]
@@ -150,6 +173,55 @@ This section is a from-scratch VPS setup guide, written for whoever deploys this
 7. **Nginx site config for the app itself**: standard Laravel `public/` document root, `try_files` fallback to `index.php`, PHP-FPM socket passthrough, and a Certbot-issued TLS cert (`certbot --nginx`) — no CRM-specific deviation from a standard Laravel deployment here.
 8. **Post-deploy checklist for every future release**, not just the first: `php artisan migrate --force`, `php artisan config:cache && php artisan route:cache && php artisan view:cache` (production should cache everything this dev environment deliberately doesn't, since dev caching just causes stale-view confusion after every edit), `npm run build` if any frontend file changed, `supervisorctl restart reverb` if `.env`'s `REVERB_*` values changed, `php artisan storage:link` once (creates the public storage symlink — only needed the first time, harmless to re-run).
 
+### Creating the production admin account (Phase 8)
+
+**Do not** copy dev data or run the demo seeder to get an admin onto a production server. The dev database's `admin@crm.local` / `AdminCrm2026!` account exists only because this repo's `DemoDataSeeder` created it for local testing, and that password is readable by anyone who can read this repo. Instead, after `migrate --force` and the default `db:seed` (roles only, no credentials):
+
+```
+php artisan app:create-admin --email=you@yourcompany.com --name="Your Name"
+```
+
+This prints something like:
+
+```
+Admin user ready.
+  Email:    you@yourcompany.com
+  Password: R~8&Y:T>U]:/Q.%2Ci-)nE6s
+
+This password is shown once and is not stored anywhere in plaintext. Save it now (a password manager, not a note file) and change it after first login.
+```
+
+That generated password is cryptographically random (`Str::password(24)`), shown **exactly once**, and never written to any file, log, or database column in plaintext (only its bcrypt hash is stored, same as every other password in this app). Copy it into a password manager immediately — if you lose it, the account isn't locked out, since the same command run again with the same `--email` updates that user's password (`updateOrCreate`), or the account can use the "Forgot password" flow from the login page once a real mailer is configured (see the checklist below).
+
+If a specific password is required instead of a generated one (e.g., an organization's password-manager-generated value), pass `--password="..."` — it must still meet the 12-character/letters/numbers/symbols minimum or the command refuses and explains why.
+
+Run this command again with a different `--email` for every additional admin the business needs — there's no limit, and no reason to ever share one admin login between people.
+
+### Production `.env` checklist — everything that must be set before going live
+
+Copy `.env.example`, then explicitly set every one of these (the dev values next to each are what this repo's local `.env` currently uses — **never reuse them**, they've been visible in this session's screenshots and terminal output all along):
+
+| Key | Production value | Why |
+|---|---|---|
+| `APP_ENV` | `production` | Changes error handling, enables production-only optimizations. |
+| `APP_DEBUG` | `false` | **Critical.** `true` leaks stack traces, file paths, and `.env` values to any visitor who triggers an error. |
+| `APP_URL` | `https://your-real-domain` | Used to generate every absolute URL (signed links, emails, asset URLs). |
+| `APP_KEY` | output of `php artisan key:generate` | Encrypts sessions/cookies — must be unique per environment, never copied from dev. |
+| `DB_CONNECTION`, `DB_HOST`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` | your real MySQL server's credentials | Dev uses a local, passwordless root MySQL — production needs a dedicated database user with a real password and only the privileges this app needs (`SELECT`/`INSERT`/`UPDATE`/`DELETE`/`CREATE`/`ALTER`/`INDEX` on this one database, not global root). |
+| `SESSION_ENCRYPT` | `true` | Dev leaves this `false`; production sessions should be encrypted at rest. |
+| `BROADCAST_CONNECTION` | `reverb` | Same as dev — this app's real-time chat needs it. |
+| `REVERB_APP_ID`, `REVERB_APP_KEY`, `REVERB_APP_SECRET` | freshly generate new random values | **Never reuse this repo's dev values** — regenerate with e.g. `php -r "echo bin2hex(random_bytes(16));"` for each. |
+| `REVERB_HOST` | your real domain (no scheme) | e.g. `crm.yourcompany.com`. |
+| `REVERB_PORT` | `443` (behind the Nginx proxy from step 6 above) | Not `8080` directly — that port should never be internet-facing. |
+| `REVERB_SCHEME` | `https` | Must match the app's own scheme or browsers block the WebSocket as mixed content. |
+| `VITE_REVERB_*` (all four) | mirror the `REVERB_*` values above | Vite inlines these at **build** time — re-run `npm run build` after changing any of them, changing `.env` alone does nothing. |
+| `QUEUE_CONNECTION` | `sync` | Same as dev, deliberately — see the Phase 4 note on why this app doesn't need a separate queue worker. |
+| `MAIL_MAILER` | a real transport (`smtp`, `ses`, `postmark`, etc.) + matching `MAIL_HOST`/`MAIL_PORT`/`MAIL_USERNAME`/`MAIL_PASSWORD`/`MAIL_FROM_ADDRESS` | Dev uses `log` (reset emails just sit in a file) — **the password-reset feature added in Phase 8 silently does nothing useful in production until this is a real mailer.** |
+| `FILESYSTEM_DISK` | `local` (fine as-is) or `s3` if quotation PDFs should survive a server rebuild | Only worth changing if the server itself isn't backed up. |
+| `LOG_LEVEL` | `error` or `warning` | Dev uses `debug` (verbose) — production should log less noise, same errors. |
+
+Anything not listed above (session driver, cache store, etc.) can stay at `.env.example`'s defaults unless there's a specific reason to change it.
+
 ## Example scenario: a lead's full journey to an order
 
 This walks the exact path the system supports end-to-end, referencing what phase built each step — useful both as a smoke-test script and as onboarding for anyone new to the app.
@@ -167,7 +239,9 @@ This walks the exact path the system supports end-to-end, referencing what phase
 11. **Admin** opens the **Dashboard** and sees this whole deal reflected in the numbers: **Total revenue (Won deals)** now includes the 5,000 from Fiona's Acme quotation, **Revenue by agent** shows a bar for Fiona, **Top clients by revenue** lists Acme Packaging Co, and **Avg. order turnaround** reflects the Won→Delivered time Pat's dispatch just produced. Fiona, on her own dashboard, sees **My open pipeline value** (0, since this deal is now Won and no longer "open") and **My conversion rate** (100% — 1 won, 0 lost). *(Phase 6)*
 12. **Admin** opens **System → Activity Log** and sees a plain accountability trail of everything above that touched a database row: the product being created, the deal being created then updated to Won, the quotation being created then updated (sent, discount fields), the order being created and its status updates, the dispatch being created — each entry showing who did it and when. Lead-specific actions (status drags, the call/note Fiona logged) aren't duplicated here — those live in the Lead's own activity timeline from Phase 2, exactly as intended. *(Phase 7)*
 
-## Test accounts (dev database)
+## Test accounts (dev database only — see "Creating the production admin account" above for real deployments)
+
+`admin@crm.local` and `pat.production@crm.local` come from `php artisan db:seed --class=DemoDataSeeder` (Phase 8: split out of the default seeder specifically so these fixed dev passwords are never created automatically, including in production). `lea.gen`/`sam.sales`/`fiona.full` were created by hand through the Agents UI during Phase 2 testing, not seeded.
 
 - `admin@crm.local` / `AdminCrm2026!`
 - `lea.gen@crm.local` / `AgentPass123!` (Lead Gen only)
