@@ -197,6 +197,31 @@ If a specific password is required instead of a generated one (e.g., an organiza
 
 Run this command again with a different `--email` for every additional admin the business needs — there's no limit, and no reason to ever share one admin login between people.
 
+### Production settings checklist — every `.env` key that must change from dev
+
+Everything below is a change *from this repo's dev `.env`*, not from `.env.example` (which already has safe blank/placeholder defaults). Go through this list top to bottom before the first production deploy:
+
+| Key | Dev value | Production value | Why |
+|---|---|---|---|
+| `APP_ENV` | `local` | `production` | Changes error pages, enables production-only optimizations, required for `--force` flags to skip confirmation prompts. |
+| `APP_DEBUG` | `true` | `false` | **Critical.** `true` in production leaks full stack traces and config values (including other `.env` secrets) to any visitor who triggers an error. |
+| `APP_KEY` | (dev-generated) | run `php artisan key:generate` fresh on the server | Encrypts sessions/cookies — reusing the dev key would let anyone with this repo decrypt production session data. |
+| `APP_URL` | `http://127.0.0.1:8000` | the real `https://` domain | Used for generating absolute URLs (signed quotation-share links, password-reset links, notification links) — wrong value breaks all of them silently. |
+| `DB_*` | local MySQL, dev credentials | real production DB host/credentials | Never the same database as dev. |
+| `BROADCAST_CONNECTION` | `reverb` | `reverb` (unchanged) | Already correct. |
+| `REVERB_APP_ID` / `REVERB_APP_KEY` / `REVERB_APP_SECRET` | this dev machine's generated values | **freshly generated**, different values | These have been typed into this dev `.env` and pasted into CHANGELOG examples during this build — treat them as burned, never reuse on a real server. Generate new ones the same way (`php artisan tinker` → any random-string helper, or `Str::random(20)`). |
+| `REVERB_HOST` | `localhost` | the real domain (no scheme) | Must match wherever Nginx is proxying `wss://` from — see the Nginx config above. |
+| `REVERB_SCHEME` | `http` | `https` | Browsers refuse a plain `ws://` connection from an `https://` page. |
+| `REVERB_PORT` / `VITE_REVERB_PORT` | `8080` | `443` (or whatever port Nginx terminates TLS on) | Paired with the Nginx `location /app` proxy block above. |
+| `VITE_REVERB_*` (all) | mirrors of the above | mirror the new production values | **Requires `npm run build` re-run after changing** — Vite inlines these at build time, not runtime. Forgetting this rebuild is the most likely way this specific setting silently stays wrong. |
+| `QUEUE_CONNECTION` | `sync` | `sync` (unchanged) | Deliberately kept simple — see the Phase 4 note on why no worker process is needed for this app's workload. |
+| `MAIL_MAILER` | `log` (reset links land in `laravel.log`, never actually delivered) | a real mailer (`smtp`, `ses`, `postmark`, whatever the business already uses) | **Required** for the "Forgot password" flow (added this phase) to actually reach anyone — with `log` still set in production, password resets silently go nowhere and every affected user just sees "check your email" forever. |
+| `MAIL_FROM_ADDRESS` / `MAIL_FROM_NAME` | placeholder | the real sending address/name | Cosmetic but visible in every password-reset email. |
+| `SESSION_DOMAIN` | `null` | the real domain (or leave `null` if single-domain) | Only matters if the app ever spans subdomains. |
+| `LOG_LEVEL` | `debug` | `error` or `warning` | `debug` in production writes far more to `laravel.log` than needed and can itself leak sensitive request data into the log file. |
+
+None of the seeded dev-only values (`REVERB_*`, any password) are secret-grade even in this dev environment — they've been generated with ordinary tools, not a vault — so the rule is simple: **generate everything in this table fresh on the production server itself, never copy a value from this repo's history or this CHANGELOG.**
+
 ### Production `.env` checklist — everything that must be set before going live
 
 Copy `.env.example`, then explicitly set every one of these (the dev values next to each are what this repo's local `.env` currently uses — **never reuse them**, they've been visible in this session's screenshots and terminal output all along):
