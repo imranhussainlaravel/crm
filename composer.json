@@ -13,6 +13,7 @@
         "laravel/reverb": "^1.10",
         "laravel/tinker": "^3.0",
         "livewire/livewire": "^4.3",
+        "pusher/pusher-php-server": "^7.2",
         "relaticle/flowforge": "^4.0",
         "spatie/laravel-permission": "^8.3"
     },
