@@ -26,6 +26,11 @@ class LeadsBoard extends BoardResourcePage
 {
     protected static string $resource = LeadResource::class;
 
+    public function getPageClasses(): array
+    {
+        return ['flowforge-board-page'];
+    }
+
     protected function getHeaderActions(): array
     {
         return [
@@ -40,6 +45,7 @@ class LeadsBoard extends BoardResourcePage
     public function board(Board $board): Board
     {
         return $board
+            ->headerToolbar()
             ->query(fn () => LeadResource::getEloquentQuery()->with(['contact.company', 'assignedAgent']))
             ->columnIdentifier('status')
             ->positionIdentifier('position')

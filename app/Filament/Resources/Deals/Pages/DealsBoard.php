@@ -20,6 +20,11 @@ class DealsBoard extends BoardResourcePage
 {
     protected static string $resource = DealResource::class;
 
+    public function getPageClasses(): array
+    {
+        return ['flowforge-board-page'];
+    }
+
     protected function getHeaderActions(): array
     {
         return [
@@ -34,6 +39,7 @@ class DealsBoard extends BoardResourcePage
     public function board(Board $board): Board
     {
         return $board
+            ->headerToolbar()
             ->query(fn () => DealResource::getEloquentQuery()->with(['lead.contact.company', 'salesRep']))
             ->columnIdentifier('stage')
             ->positionIdentifier('position')
