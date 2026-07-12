@@ -123,8 +123,6 @@ class Chat extends Page
             'content' => $this->newMessageBody,
         ]);
 
-        MessageSent::dispatch($message);
-
         $this->chatMessages[] = [
             'id' => $message->id,
             'sender_id' => $message->sender_id,
@@ -134,6 +132,18 @@ class Chat extends Page
         ];
 
         $this->newMessageBody = '';
+
+        // Broadcasting runs on the sync queue, so dispatching it inline would
+        // block this response on the Reverb round-trip (or 500 it entirely if
+        // Reverb isn't running). defer() runs it after the response is sent,
+        // so the sender's own message above appears instantly regardless.
+        defer(function () use ($message) {
+            try {
+                MessageSent::dispatch($message);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        });
     }
 
     public function onMessageReceived(array $event): void

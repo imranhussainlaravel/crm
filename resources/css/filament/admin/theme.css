@@ -12,6 +12,15 @@
     --sidebar-width: 14rem !important;
 }
 
+/* Page chrome padding: Filament wraps every page's header+content in
+   `py-8` (2rem top AND bottom) — that top 2rem is the visible gap between
+   the navbar and the breadcrumb. Applies everywhere (shared layout, not
+   board-specific). */
+.fi-page-header-main-ctn {
+    padding-top: 0.5rem !important;
+    padding-bottom: 1rem !important;
+}
+
 /* Page header (breadcrumb + title): applies everywhere, since every
    resource page (Contacts, Companies, Leads, Deals, ...) uses the same
    Filament header component. !important throughout this block because it
@@ -73,11 +82,13 @@
 /* Board height: this drives the whole scroll system. flowforge's own
    height is a hardcoded `calc(100vh - 11rem)` guess sized for Filament's
    original (much taller) header; ours needs its own value since the header
-   is now shorter. Measured directly (page.evaluate scrollHeight diff
-   against viewport) rather than guessed from a screenshot, since a wrong
-   guess here is what caused the whole-page scroll bug. */
+   is shorter and the page's top chrome padding was also reduced. Verified
+   with a scripted scroll-overflow check (body.scrollHeight vs
+   window.innerHeight) after every change, not just a visual guess — a wrong
+   guess here previously caused both a page-overflow bug and, in the
+   opposite direction, unused blank space below the columns. */
 .flowforge-board-page .h-\[calc\(100vh-11rem\)\] {
-    height: calc(100vh - 14rem);
+    height: calc(100vh - 11.25rem);
 }
 
 .flowforge-board-page .flowforge-column-content {
